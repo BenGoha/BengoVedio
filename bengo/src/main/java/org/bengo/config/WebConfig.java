@@ -19,10 +19,10 @@ public class WebConfig implements WebMvcConfigurer {
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(adminInterceptor)
-                .addPathPatterns("/admin/**", "/authorize/**", "/bengo/**", "/api/**", "/video/**")
+                .addPathPatterns("/admin/**", "/authorize/**", "/bengo/**", "/api/**", "/video/**","/customer/**")
                 .excludePathPatterns("/bengo/login/**", "/bengo/index/**", "/bengo/cdn/**", "/bengo/file/**")
                 .excludePathPatterns("/api/auth/login", "/api/auth/register","/login", "/register", "/api/urlConfig.js")
-                .excludePathPatterns("/api/urlConfig.js");
+                .excludePathPatterns("/api/urlConfig.js","/customer/login", "/customer/register");
     }
 
     @Override

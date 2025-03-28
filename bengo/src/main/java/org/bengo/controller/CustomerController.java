@@ -83,6 +83,9 @@ public class CustomerController {
     @GetMapping("/favorites")
     public R listFavorites(){
         final Long userId = UserHolder.get();
+        if (userId == null) {
+            return R.error().message("用户未登录或会话失效");
+        }
         List<Favorites> favorites = favoritesService.listByUserId(userId);
         return R.ok().data(favorites);
     }
