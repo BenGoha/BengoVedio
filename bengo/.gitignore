@@ -31,5 +31,14 @@ build/
 
 ### VS Code ###
 .vscode/
+# 通用Java项目忽略规则
+*.iml
+.idea/
+target/
+*.log
 
+# 前端项目忽略规则
+node_modules/
+dist/
+*.lock
 src/main/resources/application.yml
