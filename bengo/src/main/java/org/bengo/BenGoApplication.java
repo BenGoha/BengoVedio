@@ -31,7 +31,7 @@ public class BenGoApplication {
                 "Local: \t\thttp://124.243.181.49:" + port + "/\n\t" +
                 "------------------------------------------------------"
         );
-
+        System.out.println();
     }
 
 
