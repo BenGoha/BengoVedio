@@ -63,6 +63,7 @@ public class Video extends BaseEntity {
     private Long shareCount;
 
     // 浏览次数
+    @TableField("history_count")
     private Long historyCount;
 
     // 收藏次数

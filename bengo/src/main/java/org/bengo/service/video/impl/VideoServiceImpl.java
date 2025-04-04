@@ -1,6 +1,7 @@
 package org.bengo.service.video.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -46,6 +47,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.ObjectUtils;
 import org.springframework.util.StringUtils;
 
+import javax.annotation.PostConstruct;
 import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.function.Function;
@@ -208,6 +210,11 @@ public class VideoServiceImpl extends ServiceImpl<VideoMapper, Video> implements
         }
     }
 
+    /**
+     * 主页获取用户推送的视频
+     * @param userId
+     * @return
+     */
     @Override
     public Collection<Video> pushVideos(Long userId) {
         User user = null;
@@ -434,42 +441,73 @@ public class VideoServiceImpl extends ServiceImpl<VideoMapper, Video> implements
         return videoMapper.selectNDaysAgeVideo(id, days, limit);
     }
 
+    /**
+     * 热门视频
+     * @return
+     */
     @Override
     public Collection<Video> listHotVideo() {
+//      获取每日最新的热门视频
+//        Calendar calendar = Calendar.getInstance();
+//        int today = calendar.get(Calendar.DATE);
+//
+//        final HashMap<String, Integer> map = new HashMap<>();
+//        // 优先推送今日的
+//        map.put(RedisConstant.HOT_VIDEO + today, 10);
+//        map.put(RedisConstant.HOT_VIDEO + (today - 1), 3);
+//        map.put(RedisConstant.HOT_VIDEO + (today - 2), 2);
+//
+//        // 游客不用记录
+//        // 获取今天日期
+//        final List<Long> hotVideoIds = redisCacheUtil.pipeline(connection -> {
+//            map.forEach((k, v) -> {
+//                connection.sRandMember(k.getBytes(), v);
+//            });
+//            return null;
+//        });
+//        if (ObjectUtils.isEmpty(hotVideoIds)) {
+//            return Collections.EMPTY_LIST;
+//        }
+//        final ArrayList<Long> videoIds = new ArrayList<>();
+//        // 会返回结果有null，做下校验
+//        for (Object videoId : hotVideoIds) {
+//            if (!ObjectUtils.isEmpty(videoId)) {
+//                videoIds.addAll((List) videoId);
+//            }
+//        }
+//        if (ObjectUtils.isEmpty(videoIds)){
+//           return Collections.EMPTY_LIST;
+//
+//        }
+//        final Collection<Video> videos = listByIds(videoIds);
+//        // 和浏览记录做交集? 不需要做交集，热门视频和兴趣推送不一样
+//        setUserVoAndUrl(videos);
+//        return videos;
 
-        Calendar calendar = Calendar.getInstance();
-        int today = calendar.get(Calendar.DATE);
+        // 使用固定的 Redis 键存储长期热门视频
+        final String permanentHotVideoKey = RedisConstant.HOT_VIDEO + "_PERMANENT";
 
-        final HashMap<String, Integer> map = new HashMap<>();
-        // 优先推送今日的
-        map.put(RedisConstant.HOT_VIDEO + today, 10);
-        map.put(RedisConstant.HOT_VIDEO + (today - 1), 3);
-        map.put(RedisConstant.HOT_VIDEO + (today - 2), 2);
-
-        // 游客不用记录
-        // 获取今天日期
         final List<Long> hotVideoIds = redisCacheUtil.pipeline(connection -> {
-            map.forEach((k, v) -> {
-                connection.sRandMember(k.getBytes(), v);
-            });
+            connection.sRandMember(permanentHotVideoKey.getBytes(), 30); // 随机取 10 个
             return null;
         });
+
         if (ObjectUtils.isEmpty(hotVideoIds)) {
-            return Collections.EMPTY_LIST;
+            return Collections.emptyList();
         }
+
         final ArrayList<Long> videoIds = new ArrayList<>();
-        // 会返回结果有null，做下校验
         for (Object videoId : hotVideoIds) {
             if (!ObjectUtils.isEmpty(videoId)) {
                 videoIds.addAll((List) videoId);
             }
         }
-        if (ObjectUtils.isEmpty(videoIds)){
-           return Collections.EMPTY_LIST;
 
+        if (ObjectUtils.isEmpty(videoIds)) {
+            return Collections.emptyList();
         }
+
         final Collection<Video> videos = listByIds(videoIds);
-        // 和浏览记录做交集? 不需要做交集，热门视频和兴趣推送不一样
         setUserVoAndUrl(videos);
         return videos;
     }
@@ -622,4 +660,35 @@ public class VideoServiceImpl extends ServiceImpl<VideoMapper, Video> implements
     }
 
 
+    // 初始化 HOT_VIDEO_PERMANENT 键
+    public void initPermanentHotVideos() {
+        // 从数据库查询热门视频（按浏览量 historyCount 排序，取前 50 个）
+        List<Video> hotVideos = baseMapper.selectList(
+                new QueryWrapper<Video>()
+                        .orderByDesc("history_count") // 按浏览量排序
+                        .last("LIMIT 50") // 限制 50 条
+        );
+
+        if (hotVideos.isEmpty()) {
+            return; // 如果没有数据，直接返回
+        }
+
+        // 提取视频 ID 列表
+        List<Long> videoIds = hotVideos.stream()
+                .map(Video::getId) // 假设 Video 实体有 getId() 方法
+                .collect(Collectors.toList());
+
+        // 将视频 ID 写入 Redis 的 HOT_VIDEO_PERMANENT 键（使用 Set 数据结构）
+        String permanentHotVideoKey = RedisConstant.HOT_VIDEO + "_PERMANENT";
+        redisTemplate.opsForSet().add(permanentHotVideoKey, videoIds.toArray());
+        System.out.println("初始化热门视频的ids: " + videoIds);
+    }
+
+    /**
+     * 自动初始化方法
+     */
+    @PostConstruct
+    public void onStartup() {
+        initPermanentHotVideos();
+    }
 }
