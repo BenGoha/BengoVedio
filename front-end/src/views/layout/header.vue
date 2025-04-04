@@ -1,4 +1,3 @@
-
 <template>
     <v-app-bar floating name="app-bar" :elevation="0" color="#252632">
         <v-app-bar-nav-icon icon="mdi-menu" @click="handleClick"></v-app-bar-nav-icon>
@@ -85,8 +84,16 @@
                     </div>
                 </div>
                 <v-textarea v-model="userMessage" label="输入你的问题" rows="2" outlined @keyup.enter="sendMessage"
-                            class="chat-input" :disabled="isLoading"></v-textarea>
-                <v-btn color="primary" @click="sendMessage" class="send-btn" :loading="isLoading">发送</v-btn>
+                            class="chat-input" :disabled="isLoading || isRecording"></v-textarea>
+                <v-btn color="primary" @click="startRecording" :disabled="isRecording || isLoading" class="mr-2">
+                    开始录音
+                </v-btn>
+                <v-btn color="error" @click="stopRecording" :disabled="!isRecording || isLoading" class="mr-2">
+                    停止录音
+                </v-btn>
+                <v-btn color="primary" @click="sendMessage" class="send-btn" :loading="isLoading" :disabled="isRecording">
+                    发送
+                </v-btn>
                 <v-btn color="secondary" @click="clearChatHistory" class="clear-btn mt-2">清空聊天记录</v-btn>
                 <v-btn color="warning" @click="resetConversation" class="reset-btn mt-2">重置对话</v-btn>
             </v-card-text>
@@ -94,31 +101,19 @@
     </v-dialog>
 </template>
 
-
 <script setup>
-import {ref, onMounted, nextTick, watch} from 'vue';
-import {useRouter} from 'vue-router';
-import {apiGetUserSearchHistory} from '../../apis/user/user';
+import { ref, onMounted, nextTick, watch } from 'vue';
+import { useRouter } from 'vue-router';
+import { apiGetUserSearchHistory } from '../../apis/user/user';
 import hotList from '../../components/hotList.vue';
 import auth from '../auth/index.vue';
 import instance from "../../apis/request.js";
 
-// 定义 props（必须放在顶部）
-const {clickEvent} = defineProps({
-    clickEvent: {
-        type: Function,
-        default: (type, data) => {
-            // console.log('Default clickEvent');
-        }
-    }
+const { clickEvent } = defineProps({
+    clickEvent: { type: Function, default: (type, data) => {} }
 });
 
-// 点击事件处理
-const handleClick = () => {
-    // console.log('Nav icon clicked');
-    // console.log('clickEvent is:', clickEvent);
-    clickEvent(1, 1);
-};
+const handleClick = () => clickEvent(1, 1);
 
 // 聊天机器人相关
 const chatbotDialog = ref(false);
@@ -126,14 +121,14 @@ const userMessage = ref("");
 const chatHistory = ref([]);
 const chatContainer = ref(null);
 const isLoading = ref(false);
+const isRecording = ref(false);
 const selectedModel = ref("deepseek-reasoner");
 const modelOptions = ref([
-    {text: "带思维链 (deepseek-reasoner)", value: "deepseek-reasoner"},
-    {text: "不带思维链 (deepseek-chat)", value: "deepseek-chat"}
+    { text: "带思维链 (deepseek-reasoner)", value: "deepseek-reasoner" },
+    { text: "不带思维链 (deepseek-chat)", value: "deepseek-chat" }
 ]);
 
-watch(selectedModel, (newVal) => {
-});
+watch(selectedModel, (newVal) => {});
 
 const getDecorator = (line) => {
     if (line.startsWith('1.')) return '❶';
@@ -142,44 +137,95 @@ const getDecorator = (line) => {
     return '🔹';
 };
 
-const formatContent = (line) => {
-    return line.replace(/^(\d+\. | - | *)\s*/, '');
+const formatContent = (line) => line.replace(/^(\d+\. | - | *)\s*/, '');
+const formatTime = (timestamp) => new Date(timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+
+const openChatbot = () => chatbotDialog.value = true;
+const closeChatbot = () => chatbotDialog.value = false;
+
+const startRecording = async () => {
+    try {
+        const response = await instance.post('/bengo/start-recording');
+        if (response.data.status === 'recording') {
+            isRecording.value = true;
+            chatHistory.value.push({
+                content: '开始录音...',
+                type: 'ai',
+                reasoning_content: '',
+                timestamp: Date.now()
+            });
+        } else {
+            chatHistory.value.push({
+                content: '录音启动失败: ' + (response.data.error || '请登录后再用此功能'),
+                type: 'ai',
+                reasoning_content: '',
+                timestamp: Date.now()
+            });
+        }
+    } catch (error) {
+        chatHistory.value.push({
+            content: '录音启动失败: ' + error.message,
+            type: 'ai',
+            reasoning_content: '',
+            timestamp: Date.now()
+        });
+    }
+    scrollToBottom();
 };
 
-const formatTime = (timestamp) => {
-    return new Date(timestamp).toLocaleTimeString('zh-CN', {hour: '2-digit', minute: '2-digit'});
-};
-
-const openChatbot = () => {
-    chatbotDialog.value = true;
-};
-const closeChatbot = () => {
-    chatbotDialog.value = false;
+const stopRecording = async () => {
+    try {
+        const response = await instance.post('/bengo/stop-recording');
+        isRecording.value = false;
+        if (response.data.text) {
+            userMessage.value = response.data.text;
+            await sendMessage();
+        } else {
+            chatHistory.value.push({
+                content: '语音识别失败: ' + (response.data.error || '未知错误'),
+                type: 'ai',
+                reasoning_content: '',
+                timestamp: Date.now()
+            });
+        }
+    } catch (error) {
+        isRecording.value = false;
+        chatHistory.value.push({
+            content: '停止录音失败: ' + error.message,
+            type: 'ai',
+            reasoning_content: '',
+            timestamp: Date.now()
+        });
+    }
+    scrollToBottom();
 };
 
 const sendMessage = async () => {
     if (!userMessage.value.trim()) return;
     isLoading.value = true;
-    chatHistory.value.push({content: userMessage.value, type: 'user', reasoning_content: '', timestamp: Date.now()});
+    chatHistory.value.push({ content: userMessage.value, type: 'user', reasoning_content: '', timestamp: Date.now() });
     const aiMessageIndex = chatHistory.value.length;
-    chatHistory.value.push({content: '', type: 'ai', reasoning_content: '', timestamp: Date.now()});
+    chatHistory.value.push({ content: '', type: 'ai', reasoning_content: '', timestamp: Date.now() });
+
     try {
         const response = await fetch('/api/bengo/chat', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json', 'Accept': 'text/event-stream'},
-            body: JSON.stringify({message: userMessage.value, model: selectedModel.value})
+            headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+            body: JSON.stringify({ message: userMessage.value, model: selectedModel.value })
         });
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         const reader = response.body.getReader();
         const decoder = new TextDecoder('utf-8');
+        let fullContent = '';
+
         const processStream = async () => {
             while (true) {
-                const {done, value} = await reader.read();
+                const { done, value } = await reader.read();
                 if (done) {
-                    console.log('流式输出完成');
+                    await playAudio(fullContent);
                     break;
                 }
-                const chunk = decoder.decode(value, {stream: true});
+                const chunk = decoder.decode(value, { stream: true });
                 const lines = chunk.split('\n').filter(line => line.trim() !== '');
                 for (const line of lines) {
                     let data = line.trim();
@@ -188,10 +234,15 @@ const sendMessage = async () => {
                     try {
                         const json = JSON.parse(data);
                         const currentMessage = chatHistory.value[aiMessageIndex];
-                        if ('content' in json && typeof json.content === 'string') currentMessage.content += json.content;
-                        if ('reasoning_content' in json && typeof json.reasoning_content === 'string') currentMessage.reasoning_content += json.reasoning_content;
+                        if ('content' in json && typeof json.content === 'string') {
+                            currentMessage.content += json.content;
+                            fullContent += json.content;
+                        }
+                        if ('reasoning_content' in json && typeof json.reasoning_content === 'string') {
+                            currentMessage.reasoning_content += json.reasoning_content;
+                        }
                         if (!('content' in json) && !('reasoning_content' in json)) continue;
-                        chatHistory.value.splice(aiMessageIndex, 1, {...currentMessage});
+                        chatHistory.value.splice(aiMessageIndex, 1, { ...currentMessage });
                         await nextTick();
                         scrollToBottom();
                     } catch (e) {
@@ -205,12 +256,30 @@ const sendMessage = async () => {
         console.error("Request failed:", error);
         const currentMessage = chatHistory.value[aiMessageIndex];
         currentMessage.content += `\n请求失败，请稍后重试：${error.message}`;
-        chatHistory.value.splice(aiMessageIndex, 1, {...currentMessage});
+        chatHistory.value.splice(aiMessageIndex, 1, { ...currentMessage });
         await nextTick();
         scrollToBottom();
     } finally {
         isLoading.value = false;
         userMessage.value = "";
+    }
+};
+
+const playAudio = async (text) => {
+    try {
+        const response = await instance.post('/bengo/text-to-speech', { text }, { responseType: 'blob' });
+        const audioBlob = new Blob([response.data], { type: 'audio/mpeg' });
+        const audioUrl = URL.createObjectURL(audioBlob);
+        const audio = new Audio(audioUrl);
+        audio.play();
+    } catch (error) {
+        chatHistory.value.push({
+            content: '语音合成失败，请重试',
+            type: 'ai',
+            reasoning_content: '',
+            timestamp: Date.now()
+        });
+        scrollToBottom();
     }
 };
 
@@ -220,15 +289,13 @@ const scrollToBottom = async () => {
     if (chatBody) chatBody.scrollTop = chatBody.scrollHeight;
 };
 
-const clearChatHistory = () => {
-    chatHistory.value = [];
-};
+const clearChatHistory = () => chatHistory.value = [];
 
 const resetConversation = async () => {
     try {
         await instance.get('/bengo/reset');
         chatHistory.value = [];
-        chatHistory.value.push({content: "对话已重置", type: 'ai', reasoning_content: '', timestamp: Date.now()});
+        chatHistory.value.push({ content: "对话已重置", type: 'ai', reasoning_content: '', timestamp: Date.now() });
     } catch (error) {
         console.error("Reset conversation failed:", error);
         chatHistory.value.push({
@@ -238,6 +305,7 @@ const resetConversation = async () => {
             timestamp: Date.now()
         });
     }
+    scrollToBottom();
 };
 
 // 搜索相关
@@ -245,197 +313,57 @@ const searchInputRef = ref();
 const showSearch = ref(false);
 const searchKey = ref("");
 const router = useRouter();
-const searchHistory = ref([]); // 修正拼写错误
+const searchHistory = ref([]);
 
-const openSearch = () => {
-    showSearch.value = !showSearch.value;
-};
+const openSearch = () => showSearch.value = !showSearch.value;
 
 const search = () => {
     showSearch.value = false;
     if (!searchKey.value || searchKey.value.length === 0) {
-        router.push({path: "/"});
+        router.push({ path: "/" });
         return;
     }
-    router.push({path: "/video/search/" + searchKey.value});
-    apiGetUserSearchHistory().then(({data}) => {
-        searchHistory.value = data.data;
-    });
+    router.push({ path: "/video/search/" + searchKey.value });
+    apiGetUserSearchHistory().then(({ data }) => searchHistory.value = data.data);
     searchKey.value = "";
 };
 
-// 初始化
 onMounted(() => {
-    // console.log('header.vue mounted, clickEvent:', clickEvent);
-    apiGetUserSearchHistory().then(({data}) => {
-        searchHistory.value = data.data;
-    });
+    apiGetUserSearchHistory().then(({ data }) => searchHistory.value = data.data);
 });
 </script>
 
 <style scoped>
-/* 样式保持不变 */
-.search-wrapper {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    width: 100%;
-}
-
-.ml-4 {
-    margin-left: 16px;
-}
-
-.d-flex {
-    display: flex;
-}
-
-.chatbot-card {
-    background: linear-gradient(135deg, #6a1b9a, #8e24aa);
-    border-radius: 16px;
-    padding: 20px;
-}
-
-.chatbot-header {
-    font-size: 20px;
-    font-weight: bold;
-    color: white;
-    padding: 10px 0;
-}
-
-.close-btn {
-    margin-left: auto;
-}
-
-.chatbot-body {
-    padding: 10px;
-}
-
-.chat-container {
-    max-height: 300px;
-    overflow-y: auto;
-    margin-bottom: 10px;
-}
-
-.chat-bubble {
-    max-width: 85%;
-    width: fit-content;
-    margin: 5px 0;
-    padding: 10px 15px;
-    border-radius: 20px;
-    border: 1px solid #ddd;
-}
-
-.chat-bubble.user {
-    background-color: #e0e0e0;
-    margin-left: auto;
-    border-bottom-right-radius: 4px;
-}
-
-.chat-bubble.ai {
-    background-color: #00bcd4;
-    color: white;
-    margin-right: auto;
-    border-bottom-left-radius: 4px;
-}
-
-.reasoning-chain {
-    background: rgba(0, 0, 0, 0.1);
-    padding: 12px;
-    border-radius: 8px;
-    margin-bottom: 12px;
-}
-
-.reasoning-chain pre {
-    white-space: pre-wrap;
-    font-size: 0.9em;
-    margin: 0;
-}
-
-.response-content {
-    margin-top: 5px;
-}
-
-.response-line {
-    display: flex;
-    align-items: flex-start;
-    margin: 2px 0;
-}
-
-.decorator {
-    margin-right: 5px;
-    font-size: 0.9em;
-}
-
-.timestamp {
-    font-size: 0.8em;
-    color: #999;
-    margin-top: 5px;
-    text-align: right;
-}
-
-.chat-input {
-    margin-top: 10px;
-    border-radius: 16px;
-}
-
-.send-btn, .clear-btn, .reset-btn {
-    margin-top: 10px;
-    width: 100%;
-    border-radius: 16px;
-}
-
-.send-btn {
-    background-color: #8e24aa;
-    color: white;
-    font-weight: bold;
-}
-
-.custom-menu {
-    background-color: white !important;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-}
-
-.clear-btn {
-    background-color: #ccc;
-    color: black;
-    font-weight: bold;
-}
-
-.reset-btn {
-    background-color: #ff9800;
-    color: white;
-    font-weight: bold;
-}
-
+.search-wrapper { display: flex; justify-content: center; align-items: center; width: 100%; }
+.ml-4 { margin-left: 16px; }
+.d-flex { display: flex; }
+.chatbot-card { background: linear-gradient(135deg, #6a1b9a, #8e24aa); border-radius: 16px; padding: 20px; }
+.chatbot-header { font-size: 20px; font-weight: bold; color: white; padding: 10px 0; }
+.close-btn { margin-left: auto; }
+.chatbot-body { padding: 10px; }
+.chat-container { max-height: 300px; overflow-y: auto; margin-bottom: 10px; }
+.chat-bubble { max-width: 85%; width: fit-content; margin: 5px 0; padding: 10px 15px; border-radius: 20px; border: 1px solid #ddd; }
+.chat-bubble.user { background-color: #e0e0e0; margin-left: auto; border-bottom-right-radius: 4px; }
+.chat-bubble.ai { background-color: #00bcd4; color: white; margin-right: auto; border-bottom-left-radius: 4px; }
+.reasoning-chain { background: rgba(0, 0, 0, 0.1); padding: 12px; border-radius: 8px; margin-bottom: 12px; }
+.reasoning-chain pre { white-space: pre-wrap; font-size: 0.9em; margin: 0; }
+.response-content { margin-top: 5px; }
+.response-line { display: flex; align-items: flex-start; margin: 2px 0; }
+.decorator { margin-right: 5px; font-size: 0.9em; }
+.timestamp { font-size: 0.8em; color: #999; margin-top: 5px; text-align: right; }
+.chat-input { margin-top: 10px; border-radius: 16px; }
+.send-btn, .clear-btn, .reset-btn { margin-top: 10px; width: 100%; border-radius: 16px; }
+.send-btn { background-color: #8e24aa; color: white; font-weight: bold; }
+.custom-menu { background-color: white !important; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); }
+.clear-btn { background-color: #ccc; color: black; font-weight: bold; }
+.reset-btn { background-color: #ff9800; color: white; font-weight: bold; }
+.mr-2 { margin-right: 8px; }
 @media (max-width: 600px) {
-    .chatbot-card {
-        width: 100%;
-        padding: 15px;
-    }
-
-    .chat-container {
-        max-height: 70vh;
-    }
-
-    .chat-input, .send-btn, .clear-btn, .reset-btn {
-        width: 100%;
-    }
+    .chatbot-card { width: 100%; padding: 15px; }
+    .chat-container { max-height: 70vh; }
+    .chat-input, .send-btn, .clear-btn, .reset-btn { width: 100%; }
 }
-
-::v-deep(.v-field__outline) {
-    --v-field-border-width: 0px;
-}
-
-@media only screen and (min-width: 700px) {
-    .d700-hide {
-        display: none;
-    }
-}
-
-@media only screen and (max-width: 700px) {
-    .e700-hide {
-        display: none;
-    }
-}
+::v-deep(.v-field__outline) { --v-field-border-width: 0px; }
+@media only screen and (min-width: 700px) { .d700-hide { display: none; } }
+@media only screen and (max-width: 700px) { .e700-hide { display: none; } }
 </style>

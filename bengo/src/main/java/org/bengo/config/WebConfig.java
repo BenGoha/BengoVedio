@@ -19,10 +19,12 @@ public class WebConfig implements WebMvcConfigurer {
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(adminInterceptor)
-                .addPathPatterns("/admin/**", "/authorize/**", "/bengo/**", "/api/**", "/video/**","/customer/**")
+                .addPathPatterns("/admin/**", "/authorize/**", "/bengo/**", "/api/**", "/video/**","/customer/**","/file/**")
                 .excludePathPatterns("/bengo/login/**", "/bengo/index/**", "/bengo/cdn/**", "/bengo/file/**")
-                .excludePathPatterns("/api/auth/login", "/api/auth/register","/login", "/register", "/api/urlConfig.js")
-                .excludePathPatterns("/api/urlConfig.js","/customer/login", "/customer/register");
+                .excludePathPatterns("/api/auth/login", "/api/auth/register","/login", "/register", "/api/urlConfig.js","/file/{fileId}")
+                .excludePathPatterns("/customer/login", "/customer/register")
+                // 添加语音接口的排除规则，无需登录验证
+                .excludePathPatterns("/bengo/speech-to-text", "/bengo/text-to-speech");;
     }
 
     @Override
